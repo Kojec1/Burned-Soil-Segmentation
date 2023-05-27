@@ -5,36 +5,48 @@ import torch.nn.functional as F
 
 
 class NestedUNet(nn.Module):
+    """Nested U-Net architecture"""
     def __init__(self, n_classes: int, output_size: tuple, deep_supervision: bool = True) -> None:
         super(NestedUNet, self).__init__()
         self.output_size = output_size
+
+        # Backbone network
         self.backbone = Backbone()
-        # self.encoder = Encoder(channels=(13, 32, 64, 128, 256, 512))
+        # Decoder network
         self.decoder = Decoder(depth=4, channels=(512, 256, 128, 64, 64))
 
         self.deep_supervision = deep_supervision
 
+        # Initiate output layers
         if self.deep_supervision:
             self.out = nn.ModuleList(4 * [nn.Conv2d(64, n_classes, kernel_size=1)])
         else:
             self.out = nn.Conv2d(64, n_classes, kernel_size=1)
 
     def forward(self, x: Tensor) -> Tensor:
+        # Forward pass through the backbone
         x = self.backbone(x)
-        # x = self.encoder(x)
+        # Forward pass through the decoder network
         x = self.decoder(x)
 
         if self.deep_supervision:
+            # Deep supervision mode
             outputs = [F.interpolate(self.out[i](x[i]), self.output_size) for i in range(4)]
             return torch.stack(outputs)
 
+        # Single output mode
         return F.interpolate(self.out(x[-1]), self.output_size)
 
 
 class Backbone(nn.Module):
+    """Backbone module"""
+
     def __init__(self) -> None:
         super(Backbone, self).__init__()
+        # Load the pre-trained ResNet34 model
         self.base_model = torchvision.models.resnet34(weights='IMAGENET1K_V1')
+
+        # Disable learning for pre-trained model's layers
         for param in self.base_model.parameters():
             param.requires_grad = False
 
@@ -48,63 +60,49 @@ class Backbone(nn.Module):
         self.base_model.conv1 = new_feature
 
     def forward(self, x: Tensor) -> list:
+        # Initiate a list for outputs
         outputs = list()
+        # Iterate over backbone's modules and save outputs from blocks
         for module in list(self.base_model.children())[:-2]:
             x = module(x)
             if isinstance(module, (nn.ReLU, nn.Sequential)):
                 outputs.append(x)
 
-        return outputs
-
-
-class Encoder(nn.Module):
-    """Encoder module"""
-
-    def __init__(self, channels: tuple) -> None:
-        super(Encoder, self).__init__()
-        # Initialise a list of convolutional blocks
-        self.blocks = nn.ModuleList([ConvBlock(channels[i], channels[i + 1]) for i in range(len(channels) - 1)])
-        # Initialise a max pooling layer
-        self.maxpool = nn.MaxPool2d(2)
-
-    def forward(self, x: Tensor) -> list:
-        # Initialise an empty list for skip connection values
-        outputs = list()
-
-        # Loop through each convolutional block
-        for block in self.blocks:
-            x = block(x)
-            outputs.append(x)
-            x = self.maxpool(x)
-
-        # Return a list with the outputs of each block
+        # Return a list of outputs
         return outputs
 
 
 class Decoder(nn.Module):
+    """Decoder module"""
+
     def __init__(self, depth: int, channels: tuple) -> None:
         super(Decoder, self).__init__()
         self.depth = depth
+        # Initiate a upsampling layer
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        # Initiate a list of convolutional blocks
         self.blocks = nn.ModuleList([ConvBlock(channels[i - 1] + channels[i] * (j + 1), channels[i])
                                      for i in range(1, self.depth + 1) for j in range(i)])
+        # Initiate a concatenation dropout block
         self.concat_dropout = ConcatDropout()
 
     def forward(self, outputs: list) -> list:
+        # First layer
         x3_1 = self.blocks[0](self.concat_dropout([outputs[3], self.upsample(outputs[4])]))
-
+        # Second layer
         x2_1 = self.blocks[1](self.concat_dropout([outputs[2], self.upsample(outputs[3])]))
         x2_2 = self.blocks[2](self.concat_dropout([outputs[2], x2_1, self.upsample(x3_1)]))
-
+        # Third layer
         x1_1 = self.blocks[3](self.concat_dropout([outputs[1], self.upsample(outputs[2])]))
         x1_2 = self.blocks[4](self.concat_dropout([outputs[1], x1_1, self.upsample(x2_1)]))
         x1_3 = self.blocks[5](self.concat_dropout([outputs[1], x1_1, x1_2, self.upsample(x2_2)]))
-
+        # Fourth layer
         x0_1 = self.blocks[6](self.concat_dropout([outputs[0], self.upsample(outputs[1])]))
         x0_2 = self.blocks[7](self.concat_dropout([outputs[0], x0_1, self.upsample(x1_1)]))
         x0_3 = self.blocks[8](self.concat_dropout([outputs[0], x0_1, x0_2, self.upsample(x1_2)]))
         x0_4 = self.blocks[9](self.concat_dropout([outputs[0], x0_1, x0_2, x0_3, self.upsample(x1_3)]))
 
+        # Return a list of outputs from the fourth layer
         return [x0_1, x0_2, x0_3, x0_4]
 
 
@@ -130,16 +128,15 @@ class ConvBlock(nn.Module):
 
 
 class ConcatDropout(nn.Module):
+    """Concatenation + Dropout module"""
+
     def __init__(self) -> None:
         super(ConcatDropout, self).__init__()
+        # Initiate a dropout layer
         self.dropout = nn.Dropout(0.25)
 
     def forward(self, x: list) -> Tensor:
+        # Concatenate multiple filter banks
         x = torch.concat(x, dim=1)
+        # Apply dropout to the concatenated tensor
         return self.dropout(x)
-
-# from torchinfo import summary
-# model = NestedUNet(1, (244, 244)).to('cuda')
-# # model = Backbone().to('cuda')
-# # print(model)
-# summary(model, (8, 13, 256, 256))
