@@ -1,6 +1,6 @@
-from torch import nn, Tensor
-import torch.nn.functional as F
 import torch
+import torch.nn.functional as F
+from torch import nn, Tensor
 
 
 class BCEDiceLoss(nn.Module):
@@ -17,7 +17,7 @@ class BCEDiceLoss(nn.Module):
 
         inputs = torch.sigmoid(inputs)
         inputs = inputs.view(n, -1)
-        targets = targets.view(n, -1)
+        targets = targets.view(n, -1).float()
 
         # Count the intersection between predictions and targets
         intersection = (inputs * targets).sum(dim=1)
@@ -34,9 +34,9 @@ def dice_coef(inputs: Tensor, targets: Tensor, smooth: float = 1e-5) -> float:
     n = targets.size(0)
 
     # Flatten predictions and targets
-    inputs = torch.sigmoid(inputs)
+    inputs = torch.sigmoid(inputs).round()
     inputs = inputs.view(n, -1)
-    targets = targets.view(n, -1)
+    targets = targets.view(n, -1).float()
 
     # Count the intersection between predictions and targets
     intersection = (inputs * targets).sum(dim=1)
@@ -51,9 +51,9 @@ def iou_score(inputs: Tensor, targets: Tensor, smooth: float = 1e-5) -> float:
     n = targets.size(0)
 
     # Flatten predictions and targets
-    inputs = torch.sigmoid(inputs)
+    inputs = torch.sigmoid(inputs).round()
     inputs = inputs.view(n, -1)
-    targets = targets.view(n, -1)
+    targets = targets.view(n, -1).float()
 
     # Count the intersection and union between predictions and targets
     intersection = (inputs * targets).sum(dim=1)
@@ -62,3 +62,23 @@ def iou_score(inputs: Tensor, targets: Tensor, smooth: float = 1e-5) -> float:
     iou = (intersection + smooth) / (union + smooth)
 
     return iou.sum() / n
+
+
+def accuracy_score(inputs: Tensor, targets: Tensor, smooth: float = 1e-5) -> float:
+    """Pixel-wise accuracy metric"""
+    n = targets.size(0)
+
+    # Flatten predictions and targets
+    inputs = torch.sigmoid(inputs).round()
+    inputs = inputs.view(n, -1)
+    targets = targets.view(n, -1).float()
+
+    # Count TP, FP, FN, TN
+    tp = (inputs * targets).sum(dim=1)
+    fp = (inputs * (1 - targets)).sum(dim=1)
+    fn = ((1 - inputs) * targets).sum(dim=1)
+    tn = ((1 - inputs) * (1 - targets)).sum(dim=1)
+
+    acc = (tp + tn + smooth) / (tp + tn + fp + fn + smooth)
+
+    return acc.sum() / n

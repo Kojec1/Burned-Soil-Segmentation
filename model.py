@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 class NestedUNet(nn.Module):
     """Nested U-Net architecture"""
+
     def __init__(self, n_classes: int, output_size: tuple, deep_supervision: bool = True) -> None:
         super(NestedUNet, self).__init__()
         self.output_size = output_size
@@ -16,7 +17,6 @@ class NestedUNet(nn.Module):
         self.decoder = Decoder(depth=4, channels=(512, 256, 128, 64, 64))
 
         self.deep_supervision = deep_supervision
-
         # Initiate output layers
         if self.deep_supervision:
             self.out = nn.ModuleList(4 * [nn.Conv2d(64, n_classes, kernel_size=1)])
@@ -45,7 +45,6 @@ class Backbone(nn.Module):
         super(Backbone, self).__init__()
         # Load the pre-trained ResNet34 model
         self.base_model = torchvision.models.resnet34(weights='IMAGENET1K_V1')
-
         # Disable learning for pre-trained model's layers
         for param in self.base_model.parameters():
             param.requires_grad = False
